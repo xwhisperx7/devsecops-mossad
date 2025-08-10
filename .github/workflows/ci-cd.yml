@@ -1,0 +1,65 @@
+name: CI/CD Pipeline
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  build_scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # disable shallow clone for SonarQube【518051195663943†L160-L184】
+      - name: Setup JDK
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v4.1.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      # Optionally wait for quality gate
+      # - name: SonarQube Quality Gate
+      #   uses: SonarSource/sonarqube-quality-gate-action@v1.1.0
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+  iac_deploy:
+    runs-on: ubuntu-latest
+    needs: build_scan
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+      - name: Terraform format
+        run: terraform fmt -check
+        continue-on-error: true
+      - name: Terraform init
+        run: terraform init -input=false
+      - name: Terraform validate
+        run: terraform validate -no-color
+      - name: Terraform plan
+        run: terraform plan -no-color -input=false
+      - name: Terraform apply
+        # Auto-approve for demo; remove -auto-approve to require manual approval
+        run: terraform apply -auto-approve -input=false
+        env:
+          TF_VAR_remote_host: ${{ secrets.TF_VAR_remote_host }}
+          TF_VAR_remote_user: ${{ secrets.TF_VAR_remote_user }}
+          TF_VAR_private_key: ${{ secrets.TF_VAR_private_key }}
+
+      - name: Deploy HTML page via SSH
+        uses: appleboy/ssh-action@v0.1.6
+        with:
+          host: ${{ secrets.TF_VAR_remote_host }}
+          username: ${{ secrets.TF_VAR_remote_user }}
+          key: ${{ secrets.TF_VAR_private_key }}
+          port: 22
+          script: |
+            sudo cp index.html /var/www/devsecops/index.html
+            sudo systemctl reload nginx
