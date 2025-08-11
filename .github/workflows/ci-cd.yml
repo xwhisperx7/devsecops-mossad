@@ -17,6 +17,20 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+      - name: Debug Sonar URL being used
+        run: |
+          echo "From secrets -> $SONAR_HOST_URL"
+          if [ -f sonar-project.properties ]; then
+            echo "sonar-project.properties (keys of interest):"
+            grep -nE '^(sonar\.host\.url|sonar\.projectKey|sonar\.sources)=' sonar-project.properties || true
+          else
+            echo "sonar-project.properties not found in repo root"
+          fi
+          echo "Server version via curl:"
+          curl -s "$SONAR_HOST_URL/api/server/version" && echo
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v5
         env:
