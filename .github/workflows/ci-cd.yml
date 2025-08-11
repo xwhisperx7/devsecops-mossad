@@ -17,7 +17,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-      - name: Preflight: echo and curl SonarQube
+      - name: "Preflight: echo and curl SonarQube"
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
