@@ -17,6 +17,20 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+      - name: Preflight: echo and curl SonarQube
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          set -e
+          echo "SONAR_HOST_URL=[$SONAR_HOST_URL]"   # brackets help spot trailing spaces
+          echo "SONAR_TOKEN length: ${#SONAR_TOKEN}"
+          echo "== Server version =="
+          curl -iS "$SONAR_HOST_URL/api/server/version"
+          echo "== Token validate =="
+          curl -iS -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/authentication/validate"
+
+          
       - name: Debug Sonar URL being used
         run: |
           echo "From secrets -> $SONAR_HOST_URL"
