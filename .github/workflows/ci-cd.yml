@@ -69,7 +69,10 @@ jobs:
   
       steps:
         - uses: actions/checkout@v4
-  
+          with:
+              clean: true        # borra archivos/ carpetas no versionados de ejecuciones anteriores
+              fetch-depth: 0     # trae el historial completo (útil para herramientas/plan)
+        
         # Put the Vagrant key where Terraform will read it
         - name: Prepare SSH key (use Vagrant key on the runner)
           run: |
