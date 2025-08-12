@@ -58,51 +58,62 @@ jobs:
       #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
       
   iac_deploy:
-    runs-on: self-hosted
-    needs: build_scan
-    environment: production
+      runs-on: self-hosted
+      needs: build_scan
+      environment: production
   
-    # Solo las variables que Terraform realmente usa
-    env:
-      TF_VAR_remote_host: ${{ secrets.TF_VAR_remote_host }}
-      TF_VAR_remote_user: ${{ secrets.TF_VAR_remote_user }}
+      # Only the vars Terraform actually uses:
+      env:
+        TF_VAR_remote_host: ${{ secrets.TF_VAR_remote_host }}
+        TF_VAR_remote_user: ${{ secrets.TF_VAR_remote_user }}
   
-    steps:
-      - uses: actions/checkout@v4
+      steps:
+        - uses: actions/checkout@v4
   
-      # 1) Colocar la clave de Vagrant donde la leerá Terraform
-      - name: Prepare SSH key (use Vagrant key on the runner)
-        run: |
-          mkdir -p ~/.ssh
-          install -m 600 /vagrant/.vagrant/machines/default/virtualbox/private_key ~/.ssh/vagrant_key
-          chmod 700 ~/.ssh
+        # Put the Vagrant key where Terraform will read it
+        - name: Prepare SSH key (use Vagrant key on the runner)
+          run: |
+            mkdir -p ~/.ssh
+            install -m 600 /vagrant/.vagrant/machines/default/virtualbox/private_key ~/.ssh/vagrant_key
+            chmod 700 ~/.ssh
   
-      # (Opcional) Verificación rápida de SSH
-      - name: Preflight SSH (verbose)
-        run: |
-          ssh -vv -i ~/.ssh/vagrant_key -o StrictHostKeyChecking=no vagrant@127.0.0.1 \
-            "echo OK && id && hostname"
+        # Optional SSH preflight
+        - name: Preflight SSH (verbose)
+          run: |
+            ssh -vv -i ~/.ssh/vagrant_key -o StrictHostKeyChecking=no vagrant@127.0.0.1 \
+              "echo OK && id && hostname"
   
-      # 2) Terraform sin wrapper
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.7.5
-          terraform_wrapper: false
+        # Guardrail: fail fast if a root module still declares `variable "private_key"`
+        - name: Guard – ensure no 'variable "private_key"' in TF
+          run: |
+            if grep -R --line-number --include="*.tf" 'variable *"private_key"' .; then
+              echo "::error::Found a declaration of variable \"private_key\" in the root module. Remove it."
+              exit 1
+            fi
   
-      - name: Terraform format
-        run: terraform fmt -check
-        continue-on-error: true
+        # Terraform without the Node wrapper
+        - name: Set up Terraform
+          uses: hashicorp/setup-terraform@v3
+          with:
+            terraform_version: 1.7.5
+            terraform_wrapper: false
   
-      - name: Terraform init
-        run: terraform init -input=false
+        - name: Terraform format
+          run: terraform fmt -check
+          continue-on-error: true
   
-      - name: Terraform validate
-        run: terraform validate -no-color
+        - name: Terraform init
+          run: terraform init -input=false
   
-      - name: Terraform plan
-        run: terraform plan -no-color -input=false
+        - name: Terraform validate
+          run: terraform validate -no-color
   
-      - name: Terraform apply
-        run: terraform apply -auto-approve -input=false
-
+        - name: Terraform plan
+          run: terraform plan -no-color -input=false
+  
+        - name: Terraform apply
+          run: terraform apply -auto-approve -input=false
+    
+    
+    
+     
