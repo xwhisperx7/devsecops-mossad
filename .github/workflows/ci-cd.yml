@@ -61,6 +61,12 @@ jobs:
     runs-on: self-hosted
     needs: build_scan
     environment: production
+     # 👇 Esto hace que init/validate/plan/apply vean las tres variables
+    env:
+      TF_VAR_remote_host: ${{ secrets.TF_VAR_remote_host }}
+      TF_VAR_remote_user: ${{ secrets.TF_VAR_remote_user }}
+      TF_VAR_private_key: ${{ secrets.TF_VAR_private_key }}
+      
     steps:
       - uses: actions/checkout@v4
   
