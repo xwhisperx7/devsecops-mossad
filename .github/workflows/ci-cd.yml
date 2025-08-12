@@ -66,6 +66,7 @@ jobs:
       env:
         TF_VAR_remote_host: ${{ secrets.TF_VAR_remote_host }}
         TF_VAR_remote_user: ${{ secrets.TF_VAR_remote_user }}
+        TF_VAR_private_key_path: $HOME/.ssh/vagrant_key 
   
       steps:
         - uses: actions/checkout@v4
