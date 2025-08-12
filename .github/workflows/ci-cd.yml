@@ -81,14 +81,31 @@ jobs:
           TF_VAR_remote_host: ${{ secrets.TF_VAR_remote_host }}
           TF_VAR_remote_user: ${{ secrets.TF_VAR_remote_user }}
           TF_VAR_private_key: ${{ secrets.TF_VAR_private_key }}
-
-      - name: Deploy HTML page via SSH
-        uses: appleboy/ssh-action@v0.1.6
+          # Inicia un agente SSH e importa tu clave privada (sin Docker)
+          
+      - name: Start SSH agent and add key (no Docker)
+        uses: webfactory/ssh-agent@v0.9.0
         with:
-          host: ${{ secrets.TF_VAR_remote_host }}
-          username: ${{ secrets.TF_VAR_remote_user }}
-          key: ${{ secrets.TF_VAR_private_key }}
-          port: 22
-          script: |
-            sudo cp index.html /var/www/devsecops/index.html
-            sudo systemctl reload nginx
+          ssh-private-key: ${{ secrets.TF_VAR_private_key }}
+      
+      # Añade la huella del host al known_hosts para evitar prompts
+      - name: Add host key to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.TF_VAR_remote_host }}" >> ~/.ssh/known_hosts
+      
+      # Copia index.html por SCP y recarga nginx por SSH
+      - name: Deploy index.html over SSH
+        env:
+          HOST: ${{ secrets.TF_VAR_remote_host }}
+          USER: ${{ secrets.TF_VAR_remote_user }}
+        run: |
+          # ajusta ./index.html si está en otra ruta del repo
+          scp -P 22 ./index.html "${USER}@${HOST}:/home/${USER}/index.html"
+          ssh -p 22 "${USER}@${HOST}" \
+            "sudo mkdir -p /var/www/devsecops && \
+             sudo mv /home/${USER}/index.html /var/www/devsecops/index.html && \
+             sudo chown root:root /var/www/devsecops/index.html && \
+             sudo systemctl reload nginx"
+
+
