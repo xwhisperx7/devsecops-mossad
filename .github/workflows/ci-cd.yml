@@ -86,7 +86,21 @@ jobs:
           run: |
             ssh -vv -i ~/.ssh/vagrant_key -o StrictHostKeyChecking=no vagrant@127.0.0.1 \
               "echo OK && id && hostname"
-  
+            - name: Debug: show TF files the runner sees
+            run: |
+              echo "== Commit en runner =="
+              git rev-parse HEAD
+              git show --name-only --oneline -1
+              echo ""
+              echo "== Archivos *.tf =="
+              git ls-files '*.tf'
+              echo ""
+              echo "== Contenido con numeración de main.tf (primeras 60 líneas) =="
+              nl -ba main.tf | sed -n '1,60p' || true
+              echo ""
+              echo "== Grep exacto en main.tf =="
+              grep -nE '^\s*variable\s*"private_key"' main.tf || echo "NO encontrado"
+
         # Guardrail: fail fast if a root module still declares `variable "private_key"`
         - name: Guard – ensure no 'variable "private_key"' in TF
           run: |
