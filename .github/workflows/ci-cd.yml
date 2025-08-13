@@ -58,79 +58,70 @@ jobs:
       #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
       
   iac_deploy:
-      runs-on: self-hosted
-      needs: build_scan
-      environment: production
-  
-      # Only the vars Terraform actually uses:
-      env:
-        TF_VAR_remote_host: ${{ secrets.TF_VAR_remote_host }}
-        TF_VAR_remote_user: ${{ secrets.TF_VAR_remote_user }}
-        TF_VAR_private_key_path: $HOME/.ssh/vagrant_key 
-  
-      steps:
-        - uses: actions/checkout@v4
-          with:
-              clean: true        # borra archivos/ carpetas no versionados de ejecuciones anteriores
-              fetch-depth: 0     # trae el historial completo (útil para herramientas/plan)
-        
-        # Put the Vagrant key where Terraform will read it
-        - name: Prepare SSH key (use Vagrant key on the runner)
-          run: |
-            mkdir -p ~/.ssh
-            install -m 600 /vagrant/.vagrant/machines/default/virtualbox/private_key ~/.ssh/vagrant_key
-            chmod 700 ~/.ssh
-  
-        # Optional SSH preflight
-        - name: Preflight SSH (verbose)
-          run: |
-            ssh -vv -i ~/.ssh/vagrant_key -o StrictHostKeyChecking=no vagrant@127.0.0.1 \
-              "echo OK && id && hostname"
-            - name: Debug: show TF files the runner sees
-            run: |
-              echo "== Commit en runner =="
-              git rev-parse HEAD
-              git show --name-only --oneline -1
-              echo ""
-              echo "== Archivos *.tf =="
-              git ls-files '*.tf'
-              echo ""
-              echo "== Contenido con numeración de main.tf (primeras 60 líneas) =="
-              nl -ba main.tf | sed -n '1,60p' || true
-              echo ""
-              echo "== Grep exacto en main.tf =="
-              grep -nE '^\s*variable\s*"private_key"' main.tf || echo "NO encontrado"
+    runs-on: self-hosted
+    needs: build_scan
+    environment: production
 
-        # Guardrail: fail fast if a root module still declares `variable "private_key"`
-        - name: Guard – ensure no 'variable "private_key"' in TF
-          run: |
-            if grep -R --line-number --include="*.tf" 'variable *"private_key"' .; then
-              echo "::error::Found a declaration of variable \"private_key\" in the root module. Remove it."
-              exit 1
-            fi
-  
-        # Terraform without the Node wrapper
-        - name: Set up Terraform
-          uses: hashicorp/setup-terraform@v3
-          with:
-            terraform_version: 1.7.5
-            terraform_wrapper: false
-  
-        - name: Terraform format
-          run: terraform fmt -check
-          continue-on-error: true
-  
-        - name: Terraform init
-          run: terraform init -input=false
-  
-        - name: Terraform validate
-          run: terraform validate -no-color
-  
-        - name: Terraform plan
-          run: terraform plan -no-color -input=false
-  
-        - name: Terraform apply
-          run: terraform apply -auto-approve -input=false
+    # Variables que usará Terraform
+    env:
+      TF_VAR_remote_host:  ${{ secrets.TF_VAR_remote_host }}   # p.ej. 127.0.0.1
+      TF_VAR_remote_user:  ${{ secrets.TF_VAR_remote_user }}   # p.ej. vagrant
+      TF_VAR_private_key_path: ~/.ssh/vagrant_key              # ruta que leerá main.tf
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 0
+
+      # 1) Asegurar que exista el cliente SSH
+      - name: Ensure SSH client
+        run: |
+          if ! command -v ssh >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y --no-install-recommends openssh-client
+          fi
+          which ssh || true
+          ssh -V || true
+
+      # 2) Preparar la clave de Vagrant en ~/.ssh
+      - name: Prepare SSH key (use Vagrant key on the runner)
+        run: |
+          mkdir -p ~/.ssh
+          install -m 600 /vagrant/.vagrant/machines/default/virtualbox/private_key ~/.ssh/vagrant_key
+          chmod 700 ~/.ssh
+          ls -l ~/.ssh
+
+      # 3) Comprobación de SSH (ahora debería pasar)
+      - name: Preflight SSH (verbose)
+        run: |
+          ssh -vv -i ~/.ssh/vagrant_key -o StrictHostKeyChecking=no \
+            "${{ env.TF_VAR_remote_user }}@${{ env.TF_VAR_remote_host }}" \
+            "echo OK && id && hostname"
+
+      # 4) Terraform sin wrapper
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+          terraform_wrapper: false
+
+      - name: Terraform format
+        run: terraform fmt -check
+        continue-on-error: true
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        run: terraform validate -no-color
+
+      - name: Terraform plan
+        run: terraform plan -no-color -input=false
+
+      - name: Terraform apply
+        run: terraform apply -auto-approve -input=false
+
     
     
     
