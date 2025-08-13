@@ -12,25 +12,47 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # disable shallow clone for SonarQube
+
+      # ───── METRICS: START (después de checkout) ─────
+      - name: CI metrics ▸ start
+        env:
+          PROM_PUSH: ${{ secrets.PUSHGATEWAY_URL }}
+        run: |
+          # guardar tiempo de inicio para calcular duración
+          echo "START_TS=$(date +%s)" >> $GITHUB_ENV
+
+          # opcional: normalizar nombres para la ruta del job en pushgateway
+          WF=$(echo "${{ github.workflow }}" | tr ' /' '__')
+          JB=$(echo "${{ github.job }}" | tr ' /' '__')
+
+          cat > metrics.prom <<EOF
+          ci_job_running{repo="${{ github.repository }}",workflow="${{ github.workflow }}",job="${{ github.job }}",branch="${{ github.ref_name }}",run_id="${{ github.run_id }}"} 1
+          ci_job_start_time_seconds{repo="${{ github.repository }}",workflow="${{ github.workflow }}",job="${{ github.job }}",branch="${{ github.ref_name }}",run_id="${{ github.run_id }}"} ${START_TS}
+          EOF
+
+          curl -s --data-binary @metrics.prom \
+            "$PROM_PUSH/metrics/job/$WF/instance/${{ github.run_id }}-$JB"
+      # ────────────────────────────────────────────────
+
       - name: Setup JDK
         uses: actions/setup-java@v3
         with:
           distribution: 'temurin'
           java-version: '17'
+
       - name: "Preflight: echo and curl SonarQube"
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
           set -e
-          echo "SONAR_HOST_URL=[$SONAR_HOST_URL]"   # brackets help spot trailing spaces
+          echo "SONAR_HOST_URL=[$SONAR_HOST_URL]"
           echo "SONAR_TOKEN length: ${#SONAR_TOKEN}"
           echo "== Server version =="
           curl -iS "$SONAR_HOST_URL/api/server/version"
           echo "== Token validate =="
           curl -iS -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/authentication/validate"
 
-          
       - name: Debug Sonar URL being used
         run: |
           echo "From secrets -> $SONAR_HOST_URL"
@@ -50,30 +72,66 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-      # Optionally wait for quality gate
-      # - name: SonarQube Quality Gate
-      #   uses: SonarSource/sonarqube-quality-gate-action@v1.1.0
-      #   env:
-      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-      
+
+      # ───── METRICS: FINISH (último paso del job) ─────
+      - name: CI metrics ▸ finish
+        if: always()
+        env:
+          PROM_PUSH: ${{ secrets.PUSHGATEWAY_URL }}
+          STATUS: ${{ job.status }}   # success | failure | cancelled
+        run: |
+          END_TS=$(date +%s)
+          DUR=$(( END_TS - START_TS ))
+
+          WF=$(echo "${{ github.workflow }}" | tr ' /' '__')
+          JB=$(echo "${{ github.job }}" | tr ' /' '__')
+
+          cat > metrics.prom <<EOF
+          ci_job_duration_seconds{repo="${{ github.repository }}",workflow="${{ github.workflow }}",job="${{ github.job }}",branch="${{ github.ref_name }}",run_id="${{ github.run_id }}",status="${STATUS}"} ${DUR}
+          ci_job_last_end_time_seconds{repo="${{ github.repository }}",workflow="${{ github.workflow }}",job="${{ github.job }}",branch="${{ github.ref_name }}"} ${END_TS}
+          EOF
+
+          curl -s --data-binary @metrics.prom \
+            "$PROM_PUSH/metrics/job/$WF/instance/${{ github.run_id }}-$JB"
+      # ────────────────────────────────────────────────
+
+
   iac_deploy:
     runs-on: self-hosted
     needs: build_scan
     environment: production
-  
+
     # Variables que usará Terraform
     env:
       TF_VAR_remote_host:  ${{ secrets.TF_VAR_remote_host }}   # p.ej. 127.0.0.1
       TF_VAR_remote_user:  ${{ secrets.TF_VAR_remote_user }}   # p.ej. vagrant
       TF_VAR_private_key_path: ~/.ssh/vagrant_key              # ruta que leerá main.tf
-  
+
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
           fetch-depth: 0
-  
+
+      # ───── METRICS: START (después de checkout) ─────
+      - name: CI metrics ▸ start
+        env:
+          PROM_PUSH: ${{ secrets.PUSHGATEWAY_URL }}
+        run: |
+          echo "START_TS=$(date +%s)" >> $GITHUB_ENV
+
+          WF=$(echo "${{ github.workflow }}" | tr ' /' '__')
+          JB=$(echo "${{ github.job }}" | tr ' /' '__')
+
+          cat > metrics.prom <<EOF
+          ci_job_running{repo="${{ github.repository }}",workflow="${{ github.workflow }}",job="${{ github.job }}",branch="${{ github.ref_name }}",run_id="${{ github.run_id }}"} 1
+          ci_job_start_time_seconds{repo="${{ github.repository }}",workflow="${{ github.workflow }}",job="${{ github.job }}",branch="${{ github.ref_name }}",run_id="${{ github.run_id }}"} ${START_TS}
+          EOF
+
+          curl -s --data-binary @metrics.prom \
+            "$PROM_PUSH/metrics/job/$WF/instance/${{ github.run_id }}-$JB"
+      # ────────────────────────────────────────────────
+
       # 1) Asegurar que exista el cliente SSH
       - name: Ensure SSH client
         run: |
@@ -81,8 +139,9 @@ jobs:
             sudo apt-get update -y
             sudo apt-get install -y --no-install-recommends openssh-client
           fi
+          which ssh || true
           ssh -V || true
-  
+
       # 2) Preparar la clave de Vagrant en ~/.ssh
       - name: Prepare SSH key (use Vagrant key on the runner)
         run: |
@@ -90,56 +149,68 @@ jobs:
           install -m 600 /vagrant/.vagrant/machines/default/virtualbox/private_key ~/.ssh/vagrant_key
           chmod 700 ~/.ssh
           ls -l ~/.ssh
-  
-      # (Opcional) Comprobación de SSH
+
+      # 3) Comprobación de SSH
       - name: Preflight SSH (verbose)
         run: |
           ssh -vv -i ~/.ssh/vagrant_key -o StrictHostKeyChecking=no \
             "${{ env.TF_VAR_remote_user }}@${{ env.TF_VAR_remote_host }}" \
             "echo OK && id && hostname"
-  
-      # 3) Terraform sin wrapper
+
+      # 4) Terraform sin wrapper
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.7.5
           terraform_wrapper: false
-  
-      # (Recomendado) Formateo automático para evitar exit code 3 en -check
+
       - name: Terraform fmt (auto-fix)
         run: terraform fmt -recursive
-  
+
       - name: Terraform init
         run: terraform init -input=false
-  
+
       - name: Terraform validate
         run: terraform validate -no-color
-  
+
       - name: Terraform plan
         run: terraform plan -no-color -input=false
-  
-      # --- Mantén SOLO terraform apply aquí (sin scp/ssh) ---
+
       - name: Terraform apply
         run: terraform apply -auto-approve -input=false
-  
-      # --- PASTE/COLOCA ESTE PASO DESPUÉS DE "Terraform apply" ---
+
       - name: Deploy index.html
         env:
           HOST: ${{ env.TF_VAR_remote_host }}
           USER: ${{ env.TF_VAR_remote_user }}
           KEY:  ${{ env.TF_VAR_private_key_path }}
         run: |
-          # Sube index.html al home del usuario
           scp -i "$KEY" -o StrictHostKeyChecking=no ./index.html \
               "$USER@$HOST:/home/$USER/index.html"
-  
-          # Mueve a la carpeta web y recarga nginx
           ssh -i "$KEY" -o StrictHostKeyChecking=no "$USER@$HOST" \
             "sudo mkdir -p /var/www/devsecops && \
              sudo mv /home/$USER/index.html /var/www/devsecops/index.html && \
              sudo chown root:root /var/www/devsecops/index.html && \
              sudo systemctl reload nginx"
-  
-        
-        
-       
+
+      # ───── METRICS: FINISH (último paso del job) ─────
+      - name: CI metrics ▸ finish
+        if: always()
+        env:
+          PROM_PUSH: ${{ secrets.PUSHGATEWAY_URL }}
+          STATUS: ${{ job.status }}
+        run: |
+          END_TS=$(date +%s)
+          DUR=$(( END_TS - START_TS ))
+
+          WF=$(echo "${{ github.workflow }}" | tr ' /' '__')
+          JB=$(echo "${{ github.job }}" | tr ' /' '__')
+
+          cat > metrics.prom <<EOF
+          ci_job_duration_seconds{repo="${{ github.repository }}",workflow="${{ github.workflow }}",job="${{ github.job }}",branch="${{ github.ref_name }}",run_id="${{ github.run_id }}",status="${STATUS}"} ${DUR}
+          ci_job_last_end_time_seconds{repo="${{ github.repository }}",workflow="${{ github.workflow }}",job="${{ github.job }}",branch="${{ github.ref_name }}"} ${END_TS}
+          EOF
+
+          curl -s --data-binary @metrics.prom \
+            "$PROM_PUSH/metrics/job/$WF/instance/${{ github.run_id }}-$JB"
+      # ────────────────────────────────────────────────
