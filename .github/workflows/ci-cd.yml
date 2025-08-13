@@ -121,8 +121,11 @@ jobs:
 
       - name: Terraform apply
         run: terraform apply -auto-approve -input=false
-
-    
-    
-    
-     
+          scp -i ~/.ssh/vagrant_key ./index.html vagrant@127.0.0.1:/home/vagrant/index.html
+          ssh -i ~/.ssh/vagrant_key vagrant@127.0.0.1 'sudo mv /home/vagrant/index.html /var/www/devsecops/index.html && sudo systemctl reload nginx'
+  
+  
+      
+      
+      
+       
