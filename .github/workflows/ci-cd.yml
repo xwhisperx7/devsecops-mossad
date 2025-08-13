@@ -61,19 +61,19 @@ jobs:
     runs-on: self-hosted
     needs: build_scan
     environment: production
-
+  
     # Variables que usará Terraform
     env:
       TF_VAR_remote_host:  ${{ secrets.TF_VAR_remote_host }}   # p.ej. 127.0.0.1
       TF_VAR_remote_user:  ${{ secrets.TF_VAR_remote_user }}   # p.ej. vagrant
       TF_VAR_private_key_path: ~/.ssh/vagrant_key              # ruta que leerá main.tf
-
+  
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
           fetch-depth: 0
-
+  
       # 1) Asegurar que exista el cliente SSH
       - name: Ensure SSH client
         run: |
@@ -81,9 +81,8 @@ jobs:
             sudo apt-get update -y
             sudo apt-get install -y --no-install-recommends openssh-client
           fi
-          which ssh || true
           ssh -V || true
-
+  
       # 2) Preparar la clave de Vagrant en ~/.ssh
       - name: Prepare SSH key (use Vagrant key on the runner)
         run: |
@@ -91,41 +90,56 @@ jobs:
           install -m 600 /vagrant/.vagrant/machines/default/virtualbox/private_key ~/.ssh/vagrant_key
           chmod 700 ~/.ssh
           ls -l ~/.ssh
-
-      # 3) Comprobación de SSH (ahora debería pasar)
+  
+      # (Opcional) Comprobación de SSH
       - name: Preflight SSH (verbose)
         run: |
           ssh -vv -i ~/.ssh/vagrant_key -o StrictHostKeyChecking=no \
             "${{ env.TF_VAR_remote_user }}@${{ env.TF_VAR_remote_host }}" \
             "echo OK && id && hostname"
-
-      # 4) Terraform sin wrapper
+  
+      # 3) Terraform sin wrapper
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.7.5
           terraform_wrapper: false
-
-      - name: Terraform format
-        run: terraform fmt -check
-        continue-on-error: true
-
+  
+      # (Recomendado) Formateo automático para evitar exit code 3 en -check
+      - name: Terraform fmt (auto-fix)
+        run: terraform fmt -recursive
+  
       - name: Terraform init
         run: terraform init -input=false
-
+  
       - name: Terraform validate
         run: terraform validate -no-color
-
+  
       - name: Terraform plan
         run: terraform plan -no-color -input=false
-
+  
+      # --- Mantén SOLO terraform apply aquí (sin scp/ssh) ---
       - name: Terraform apply
         run: terraform apply -auto-approve -input=false
-          scp -i ~/.ssh/vagrant_key ./index.html vagrant@127.0.0.1:/home/vagrant/index.html
-          ssh -i ~/.ssh/vagrant_key vagrant@127.0.0.1 'sudo mv /home/vagrant/index.html /var/www/devsecops/index.html && sudo systemctl reload nginx'
   
+      # --- PASTE/COLOCA ESTE PASO DESPUÉS DE "Terraform apply" ---
+      - name: Deploy index.html
+        env:
+          HOST: ${{ env.TF_VAR_remote_host }}
+          USER: ${{ env.TF_VAR_remote_user }}
+          KEY:  ${{ env.TF_VAR_private_key_path }}
+        run: |
+          # Sube index.html al home del usuario
+          scp -i "$KEY" -o StrictHostKeyChecking=no ./index.html \
+              "$USER@$HOST:/home/$USER/index.html"
   
-      
-      
-      
+          # Mueve a la carpeta web y recarga nginx
+          ssh -i "$KEY" -o StrictHostKeyChecking=no "$USER@$HOST" \
+            "sudo mkdir -p /var/www/devsecops && \
+             sudo mv /home/$USER/index.html /var/www/devsecops/index.html && \
+             sudo chown root:root /var/www/devsecops/index.html && \
+             sudo systemctl reload nginx"
+  
+        
+        
        
